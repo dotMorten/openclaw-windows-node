@@ -148,11 +148,18 @@ public sealed class ChatTimelinePresentationTests
         Assert.Contains("scrollView.Loaded += OnScrollViewLoaded", initialPositioning);
         Assert.Contains("StopWaitingForScrollView();", initialPositioning);
         Assert.Contains("AttachScrollView();", initialPositioning);
-        Assert.Contains("TailNavigationPolicy.TryCapture(", initialPositioning);
+        Assert.Contains("initialRequest.TryResolve(", initialPositioning);
         Assert.Contains("StartTailRequest(request);", initialPositioning);
         Assert.Contains("itemsView.DispatcherQueue.TryEnqueue", initialPositioning);
-        Assert.Contains("var version = _version;", initialPositioning);
-        Assert.Contains("_disposed || !_valid || version != _version", initialPositioning);
+        Assert.Contains("new InitialTailNavigationRequest(_version)", initialPositioning);
+        Assert.Contains("_disposed || !_valid || initialRequest.Version != _version", initialPositioning);
+        var dispatchStart = initialPositioning.IndexOf("itemsView.DispatcherQueue.TryEnqueue", StringComparison.Ordinal);
+        Assert.DoesNotContain("TryCapture(", initialPositioning[..dispatchStart]);
+        Assert.DoesNotContain("TryResolve(", initialPositioning[..dispatchStart]);
+        Assert.DoesNotContain("_tailIndex", initialPositioning[..dispatchStart]);
+        Assert.DoesNotContain("_displayedTailKey", initialPositioning[..dispatchStart]);
+        Assert.DoesNotContain("_itemCount", initialPositioning[..dispatchStart]);
+        Assert.Contains("initialRequest.TryResolve(", initialPositioning[dispatchStart..]);
         Assert.DoesNotContain("AwaitLayout", binding);
 
         var unloadStart = binding.IndexOf("private void OnUnloaded(", StringComparison.Ordinal);
@@ -160,6 +167,61 @@ public sealed class ChatTimelinePresentationTests
         Assert.Contains("StopWaitingForScrollView();", binding[unloadStart..stopWaitingStart]);
         var disposeStart = binding.IndexOf("public void Dispose()", StringComparison.Ordinal);
         Assert.Contains("StopWaitingForScrollView();", binding[disposeStart..]);
+    }
+
+    [Fact]
+    public void InitialTailNavigationRequest_ResolvesSameKeyAtCurrentIndexAfterDispatch()
+    {
+        var initialRequest = new InitialTailNavigationRequest(Version: 1);
+        var tailIndex = 1;
+        var itemCount = 2;
+        const string thinkingKey = "thinking";
+        Assert.True(TailNavigationPolicy.TryCapture(tailIndex, thinkingKey, itemCount, out var staleRequest));
+
+        TailNavigationRequest? executed = null;
+        var dispatcher = new Queue<Action>();
+        dispatcher.Enqueue(() =>
+        {
+            if (initialRequest.TryResolve(1, tailIndex, thinkingKey, itemCount, out var request)
+                && TailNavigationPolicy.CanExecute(request, tailIndex, thinkingKey, itemCount))
+                executed = request;
+        });
+
+        // A tool row arrives before the same thinking row while initial navigation is queued.
+        tailIndex = 2;
+        itemCount = 3;
+        Assert.False(TailNavigationPolicy.CanExecute(staleRequest, tailIndex, thinkingKey, itemCount));
+        Assert.Null(executed);
+
+        dispatcher.Dequeue()();
+
+        Assert.Equal(new TailNavigationRequest(2, thinkingKey), executed);
+    }
+
+    [Fact]
+    public void InitialTailNavigationRequest_RejectsChangedSessionGeneration()
+    {
+        var initialRequest = new InitialTailNavigationRequest(Version: 1);
+
+        Assert.False(initialRequest.TryResolve(
+            currentVersion: 2,
+            currentTailIndex: 0,
+            currentDisplayedTailKey: "other-session",
+            itemCount: 1,
+            out _));
+    }
+
+    [Fact]
+    public void InitialTailNavigationRequest_RejectsTailThatBecameEmptyBeforeDispatch()
+    {
+        var initialRequest = new InitialTailNavigationRequest(Version: 1);
+
+        Assert.False(initialRequest.TryResolve(
+            currentVersion: 1,
+            currentTailIndex: -1,
+            currentDisplayedTailKey: null,
+            itemCount: 0,
+            out _));
     }
 
     [Fact]

@@ -168,14 +168,12 @@ file sealed class InitialTailPositioner : IDisposable
         }
 
         StopWaitingForScrollView();
-        var version = _version;
-        if (!TailNavigationPolicy.TryCapture(_tailIndex, _displayedTailKey, _itemCount, out var request))
-            return;
+        var initialRequest = new InitialTailNavigationRequest(_version);
 
         // Leave Reactor reconciliation before native navigation. The bring request handles layout itself.
         itemsView.DispatcherQueue.TryEnqueue(() =>
         {
-            if (_disposed || !_valid || version != _version)
+            if (_disposed || !_valid || initialRequest.Version != _version)
                 return;
 
             if (!itemsView.IsLoaded || itemsView.ScrollView is not { IsLoaded: true })
@@ -183,6 +181,10 @@ file sealed class InitialTailPositioner : IDisposable
                 TryPositionInitialTail();
                 return;
             }
+
+            if (!initialRequest.TryResolve(
+                    _version, _tailIndex, _displayedTailKey, _itemCount, out var request))
+                return;
 
             AttachScrollView();
             StartTailRequest(request);
